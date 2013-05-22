@@ -1,6 +1,7 @@
 ﻿using SmsRu.Enumerations;
 using SmsRu.Helpers;
 using System;
+using System.Collections.Generic;
 using System.Configuration;
 using System.IO;
 using System.Net;
@@ -10,7 +11,7 @@ using System.Text;
 namespace SmsRu
 {
     /// <summary>
-    /// Класс для работы с SMS.RU API.
+    /// Класс для работы с SMS.RU API. ISmsProvider - интерфейс, в котором описаны сигнатуры методов для работы с API.
     /// </summary>
     public class SmsRuProvider : ISmsProvider
     {
@@ -19,7 +20,8 @@ namespace SmsRu
          * Официальная документация по API - http://sms.ru/?panel=api&subpanel=method&show=sms/send.
          * Разработчик - gennadykarasev@gmail.com. В случае, если что-то не работает, то писать на эту почту.
          * 
-         * Для работы с методами класса, нужно указать в app.config значения для переменных ниже.
+         * Для работы с методами класса, нужно указать в app.config значения для переменных, которые используются в коде ниже.
+         * Следите за балансом. Если баланса не хватит, чтобы отправить на все номера - сообщение будет уничтожено (его не получит никто).
          *
          */
 
@@ -36,6 +38,7 @@ namespace SmsRu
         String smtpServer = ConfigurationManager.AppSettings["smtpServer"];                         // SMTP-сервер.
         Int32 smtpPort = Convert.ToInt32(ConfigurationManager.AppSettings["smtpPort"]);             // Порт для авторизации на SMTP-сервере.
         Boolean smtpUseSSL = Convert.ToBoolean(ConfigurationManager.AppSettings["smtpUseSSL"]);     // Флаг - использовать SSL.
+        Boolean translit = Convert.ToBoolean(ConfigurationManager.AppSettings["translit"]);         // Переводит все русские символы в латинские.
         Boolean test = Convert.ToBoolean(ConfigurationManager.AppSettings["test"]);                 // Имитирует отправку сообщения для тестирования ваших программ на правильность обработки ответов сервера. При этом само сообщение не отправляется и баланс не расходуется.
 
         // Адреса-константы для работы с API
@@ -59,37 +62,52 @@ namespace SmsRu
         String log_balance = ConfigurationManager.AppSettings["logFolder"] + "Balance.txt";
         String log_limit = ConfigurationManager.AppSettings["logFolder"] + "Limit.txt";
         String log_senders = ConfigurationManager.AppSettings["logFolder"] + "Senders.txt";
-        String log_auth = ConfigurationManager.AppSettings["logFolder"] + "Authentication.txt";
+        String log_auth = ConfigurationManager.AppSettings["logFolder"] + "AuthCheck.txt";
         String log_error = ConfigurationManager.AppSettings["logFolder"] + "Error.txt";
         String log_stoplist = ConfigurationManager.AppSettings["logFolder"] + "Stoplist.txt";
         #endregion
 
         #region Отправка сообщений
-        /// <summary>
-        /// Совершает отправку СМС сообщения одному или нескольким получателям.
-        /// </summary>
-        /// <param name="from">Имя отправителя (должно быть согласовано с администрацией). Если не заполнено, в качестве отправителя будет указан ваш номер.</param>
-        /// <param name="to">Номер телефона получателя (либо несколько номеров, через запятую — до 100 штук за один запрос)</param>
-        /// <param name="text">Текст сообщения в кодировке UTF-8</param>
-        /// <param name="authType">Тип авторизации - простая, усиленная без api_id, усиленная с api_id</param>
-        /// <returns>Ответ сервера</returns>
+
+
+        public String Send(String from, String to, String text)
+        {
+            return Send(from, new String[] { to }, text, DateTime.MinValue, EnumAuthenticationTypes.Strong);
+        }
+
+        public String Send(String from, String to, String text, DateTime dateTime)
+        {
+            return Send(from, new String[] { to }, text, dateTime, EnumAuthenticationTypes.Strong);
+        }
+
+        public String Send(String from, String to, String text, EnumAuthenticationTypes authType)
+        {
+            return Send(from, new String[] { to }, text, DateTime.MinValue, authType);
+        }
+
+        public String Send(String from, String to, String text, DateTime dateTime, EnumAuthenticationTypes authType)
+        {
+            return Send(from, new String[] { to }, text, dateTime, authType);
+        }
+
+        public String Send(String from, String[] to, String text)
+        {
+            return Send(from, to, text, DateTime.MinValue, EnumAuthenticationTypes.Strong);
+        }
+
+        public String Send(String from, String[] to, String text, DateTime dateTime)
+        {
+            return Send(from, to, text, dateTime, EnumAuthenticationTypes.Strong);
+        }
+
         public String Send(String from, String[] to, String text, EnumAuthenticationTypes authType)
         {
             return Send(from, to, text, DateTime.MinValue, authType);
         }
-
-
-        /// <summary>
-        /// Совершает отправку СМС сообщения одному или нескольким получателям.
-        /// </summary>
-        /// <param name="from">Имя отправителя (должно быть согласовано с администрацией). Если не заполнено, в качестве отправителя будет указан ваш номер.</param>
-        /// <param name="to">Номер телефона получателя (либо несколько номеров, через запятую — до 100 штук за один запрос)</param>
-        /// <param name="text">Текст сообщения в кодировке UTF-8</param>
-        /// <param name="dateTime">Дата и время отправки. Должно быть не больше 7 дней с момента подачи запроса. Если время меньше текущего времени, сообщение отправляется моментально.</param>
-        /// <param name="authType">Тип авторизации - простая, усиленная без api_id, усиленная с api_id</param>
-        /// <returns>Ответ сервера</returns>
+        
         public String Send(String from, String[] to, String text, DateTime dateTime, EnumAuthenticationTypes authType)
         {
+            // TODO: Нужно проверить хватит ли баланса. Баланса не хватит, чтобы отправить на все номера - сообщение будет уничтожено (его не получит никто).
             String result = String.Empty;
 
             if (to.Length < 1)
@@ -98,11 +116,12 @@ namespace SmsRu
                 throw new ArgumentOutOfRangeException("to", "Неверные входные данные - слишком много элементов (больше 100) в массиве.");
             if (dateTime == DateTime.MinValue)
                 dateTime = DateTime.Now;
-            if ((DateTime.Now - dateTime).Days > new TimeSpan(7, 0, 0, 0).Days)
-                throw new ArgumentOutOfRangeException("dateTime", "Неверные входные данные - должно быть не больше 7 дней с момента подачи запроса.");
+            // Лишнее, не надо генерировать это исключение. Если время меньше текущего времени, сообщение отправляется моментально - правило на сервере.
+            // if ((DateTime.Now - dateTime).Days > new TimeSpan(7, 0, 0, 0).Days)
+            //    throw new ArgumentOutOfRangeException("dateTime", "Неверные входные данные - должно быть не больше 7 дней с момента подачи запроса.");
 
-            // TODO: Нужно проверить хватит ли баланса. Баланса не хватит, чтобы отправить на все номера - сообщение будет уничтожено (его не получит никто).
-                        
+            
+
             try
             {
                 if (!Directory.Exists(dir))
@@ -147,6 +166,8 @@ namespace SmsRu
                         parameters += "&time=" + TimeHelper.GetUnixTime(dateTime);
                     if (partnerId != String.Empty)
                         parameters += "&partner_id=" + partnerId;
+                    if (translit == true)
+                        parameters += "&translit=1";
                     if (test == true)
                         parameters += "&test=1";
                     writer.WriteLine(String.Format("Запрос: {0}{1}", Environment.NewLine, parameters));
@@ -187,38 +208,6 @@ namespace SmsRu
                         }
                         result = String.Empty;
                     }
-
-                    //WebRequest req = WebRequest.Create(link);
-                    //using (WebResponse response = req.GetResponse())
-                    //{
-                    //    using (Stream stream = response.GetResponseStream())
-                    //    {
-                    //        if (stream != null)
-                    //            using (StreamReader streadReader = new StreamReader(stream))
-                    //            {
-                    //                answer = streadReader.ReadToEnd();
-
-                    //                writer.WriteLine(String.Format("Ответ: {0}{1}", Environment.NewLine, answer));
-                    //                writer.WriteLine("Документация - http://sms.ru/?panel=api&subpanel=method&show=sms/send" + Environment.NewLine);
-
-                    //                String[] lines = answer.Split(new String[] { "\n" }, StringSplitOptions.None);
-                    //                if (Convert.ToInt32(lines[0]) == Convert.ToInt32(ResponseOnSendRequest.MessageAccepted))
-                    //                {
-                    //                    result = answer;
-                    //                }
-                    //                else
-                    //                {
-                    //                    using (StreamWriter w = new StreamWriter(log_error, true))
-                    //                    {
-                    //                        w.WriteLine(String.Format("{0}={1}{2}Отправка СМС получателям: {3}", DateTime.Now.ToLongDateString(), DateTime.Now.ToLongTimeString(), Environment.NewLine, recipients));
-                    //                        w.WriteLine(String.Format("Ответ: {0}{1}", Environment.NewLine, answer));
-                    //                        w.WriteLine("Документация - http://sms.ru/?panel=api&subpanel=method&show=sms/send" + Environment.NewLine);
-                    //                    }
-                    //                    result = String.Empty;
-                    //                }
-                    //            }
-                    //    }
-                    //}
                 }
                 catch (Exception ex)
                 {
@@ -238,12 +227,143 @@ namespace SmsRu
             return result;
         }
 
-        /// <summary>
-        /// Отправка СМС сообщений по электронной почте (более надежно, но нет возможность отслеживать в реальном времени ошибки типа нехватки средств).
-        /// </summary>
-        /// <param name="to">Номер получателя должен быть написан только цифрами, без пробелов и других знаков. Если вы согласовали с нами имя отправителя, вы можете указать его в заголовке через пробел после номера получателя с префиксом "from:" (пример: 79161234567 from:Service). Если вы хотите указать нескольких получателей (до 50 за раз), укажите их через запятую (но без пробелов), пример: 79161234567,79161234567.</param>
-        /// <param name="text">Тело письма - текст сообщения</param>
-        /// <returns></returns>
+        public String SendMultiple(String from, Dictionary<String, String> toAndText)
+        {
+            return SendMultiple(from, toAndText, DateTime.Now, EnumAuthenticationTypes.Strong);
+        }
+
+        public String SendMultiple(String from, Dictionary<String, String> toAndText, DateTime dateTime)
+        {
+            return SendMultiple(from, toAndText, dateTime, EnumAuthenticationTypes.Strong);
+        }
+
+        public String SendMultiple(String from, Dictionary<String, String> toAndText, EnumAuthenticationTypes authType)
+        {
+            return SendMultiple(from, toAndText, DateTime.Now, authType);
+        }
+
+        public String SendMultiple(String from, Dictionary<String, String> toAndText, DateTime dateTime, EnumAuthenticationTypes authType)
+        {
+            // TODO: Нужно проверить хватит ли баланса. Баланса не хватит, чтобы отправить на все номера - сообщение будет уничтожено (его не получит никто).
+            String result = String.Empty;
+
+            if (toAndText.Count < 1)
+                throw new ArgumentNullException("to", "Неверные входные данные - массив пуст.");
+            if (toAndText.Count > 100)
+                throw new ArgumentOutOfRangeException("to", "Неверные входные данные - слишком много элементов (больше 100) в массиве.");
+            if (dateTime == DateTime.MinValue)
+                dateTime = DateTime.Now;
+
+            // Лишнее, не надо генерировать это исключение. Если время меньше текущего времени, сообщение отправляется моментально - правило на сервере.
+            // if ((DateTime.Now - dateTime).Days > new TimeSpan(7, 0, 0, 0).Days)
+            //    throw new ArgumentOutOfRangeException("dateTime", "Неверные входные данные - должно быть не больше 7 дней с момента подачи запроса.");
+                       
+
+            try
+            {
+                if (!Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("Ошибка доступа", ex.InnerException);
+            }
+
+            using (StreamWriter writer = new StreamWriter(log_sent, true))
+            {
+                String auth = String.Empty;
+                String parameters = String.Empty;
+                String answer = String.Empty;
+                String recipients = String.Empty;
+                String token = String.Empty;
+
+                foreach (KeyValuePair<String, String> kvp in toAndText)
+                {
+                    recipients += "&multi[" + kvp.Key + "]=" + kvp.Value;
+                }
+
+                writer.WriteLine(String.Format("{0}={1}{2}Отправка СМС получателям: {3}", DateTime.Now.ToLongDateString(), DateTime.Now.ToLongTimeString(), Environment.NewLine, recipients));
+
+                try
+                {
+                    token = GetToken();
+
+                    String sha512 = HashCodeHelper.GetSHA512Hash(String.Format("{0}{1}", password, token)).ToLower();
+                    String sha512wapi = HashCodeHelper.GetSHA512Hash(String.Format("{0}{1}{2}", password, token, apiId)).ToLower();
+
+                    if (authType == EnumAuthenticationTypes.Simple)
+                        auth = String.Format("api_id={0}", apiId);
+                    if (authType == EnumAuthenticationTypes.Strong)
+                        auth = String.Format("login={0}&token={1}&sha512={2}", login, token, sha512);
+                    if (authType == EnumAuthenticationTypes.StrongApi)
+                        auth = String.Format("login={0}&token={1}&sha512={2}", login, token, sha512wapi);
+
+                    parameters = String.Format("{0}&from={1}{2}", auth, from, recipients);
+                    if (dateTime != DateTime.MinValue)
+                        parameters += "&time=" + TimeHelper.GetUnixTime(dateTime);
+                    if (partnerId != String.Empty)
+                        parameters += "&partner_id=" + partnerId;
+                    if (translit == true)
+                        parameters += "&translit=1";
+                    if (test == true)
+                        parameters += "&test=1";
+                    writer.WriteLine(String.Format("Запрос: {0}{1}", Environment.NewLine, parameters));
+
+                    WebRequest request = WebRequest.Create(sendUrl);
+                    request.ContentType = "application/x-www-form-urlencoded";
+                    request.Method = "POST";
+                    Byte[] bytes = Encoding.UTF8.GetBytes(parameters);
+                    request.ContentLength = bytes.Length;
+                    Stream os = request.GetRequestStream();
+                    os.Write(bytes, 0, bytes.Length);
+                    os.Close();
+
+                    using (WebResponse resp = request.GetResponse())
+                    {
+                        if (resp == null) return null;
+                        using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
+                        {
+                            answer = sr.ReadToEnd().Trim();
+                        }
+                    }
+
+                    writer.WriteLine(String.Format("Ответ: {0}{1}", Environment.NewLine, answer));
+                    writer.WriteLine("Документация - http://sms.ru/?panel=api&subpanel=method&show=sms/send" + Environment.NewLine);
+
+                    String[] lines = answer.Split(new String[] { "\n" }, StringSplitOptions.None);
+                    if (Convert.ToInt32(lines[0]) == Convert.ToInt32(ResponseOnSendRequest.MessageAccepted))
+                    {
+                        result = answer;
+                    }
+                    else
+                    {
+                        using (StreamWriter w = new StreamWriter(log_error, true))
+                        {
+                            w.WriteLine(String.Format("{0}={1}{2}Отправка СМС получателям: {3}", DateTime.Now.ToLongDateString(), DateTime.Now.ToLongTimeString(), Environment.NewLine, recipients));
+                            w.WriteLine(String.Format("Ответ: {0}{1}", Environment.NewLine, answer));
+                            w.WriteLine("Документация - http://sms.ru/?panel=api&subpanel=method&show=sms/send" + Environment.NewLine);
+                        }
+                        result = String.Empty;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    writer.WriteLine("Возникла непонятная ошибка. Нужно проверить значения в файле конфигурации и разобраться в коде. Скорее всего введены неверные значения, либо сервер SMS.RU недоступен.");
+                    writer.WriteLine(ex.Message);
+                    writer.WriteLine(ex.StackTrace + Environment.NewLine);
+
+                    using (StreamWriter w = new StreamWriter(log_error, true))
+                    {
+                        w.WriteLine("Возникла непонятная ошибка. Нужно проверить значения в файле конфигурации и разобраться в коде. Скорее всего введены неверные значения, либо сервер SMS.RU недоступен.");
+                        w.WriteLine(ex.Message);
+                        w.WriteLine(ex.StackTrace + Environment.NewLine);
+                    }
+                }
+
+            }
+            return result;
+        }
+        
         public ResponseOnSendRequest SendByEmail(String[] to, String text)
         {
             /*
@@ -302,7 +422,7 @@ namespace SmsRu
                     })
                     {
                         smtp.Send(message);
-                        writer.WriteLine(String.Format("Письмо успешно отправлено."));
+                        writer.WriteLine(String.Format("Текст: {0}{1}Письмо успешно отправлено.", text, Environment.NewLine));
                     }
 
                     result = ResponseOnSendRequest.MessageAccepted;
@@ -323,12 +443,7 @@ namespace SmsRu
         #endregion
 
         #region Проверка статуса сообщения
-        /// <summary>
-        /// Проверка статуса отправленного сообщения. Мы настоятельно рекомендуем использовать систему Callback для более быстрого и удобного получения статусов сообщений.
-        /// </summary>
-        /// <param name="id">Идентификатор сообщения, полученный при использовании метода sms/send</param>
-        /// <param name="authType">Тип авторизации - простая, усиленная без api_id, усиленная с api_id</param>
-        /// <returns>Ответ сервера.</returns>
+        
         public ResponseOnStatusRequest CheckStatus(String id, EnumAuthenticationTypes authType)
         {
             ResponseOnStatusRequest result = ResponseOnStatusRequest.MethodNotFound;
@@ -390,9 +505,10 @@ namespace SmsRu
                                     {
                                         using (StreamWriter w = new StreamWriter(log_error, true))
                                         {
-                                            writer.WriteLine(String.Format("{0}={1}{2}Проверка статуса сообщения: {3}", DateTime.Now.ToLongDateString(), DateTime.Now.ToLongTimeString(), Environment.NewLine, id));
-                                            writer.WriteLine(String.Format("Ответ: {0}{1}", Environment.NewLine, answer));
-                                            writer.WriteLine("Документация - http://sms.ru/?panel=api&subpanel=method&show=sms/status" + Environment.NewLine);
+                                            w.WriteLine(String.Format("{0}={1}{2}Проверка статуса по сообщению: {3}", DateTime.Now.ToLongDateString(), DateTime.Now.ToLongTimeString(), Environment.NewLine, id));
+                                            w.WriteLine(String.Format("Запрос: {0}", link));
+                                            w.WriteLine(String.Format("Ответ: {0}{1}", Environment.NewLine, answer));
+                                            w.WriteLine("Документация - http://sms.ru/?panel=api&subpanel=method&show=sms/status" + Environment.NewLine);
                                         }
 
                                         result = (ResponseOnStatusRequest)Convert.ToInt32(lines[0]);
@@ -422,13 +538,7 @@ namespace SmsRu
         #endregion
 
         #region Узнать стоимость сообщения и количество необходимых для отправки сообщений
-        /// <summary>
-        /// Возвращает стоимость сообщения на указанный номер и количество сообщений, необходимых для его отправки.
-        /// </summary>
-        /// <param name="to">Номер телефона получателя</param>
-        /// <param name="text">Текст сообщения в кодировке UTF-8. Если текст не введен, то возвращается стоимость 1 сообщения. Если текст введен, то возвращается стоимость, рассчитанная по длине сообщения.</param>
-        /// <param name="authType">Тип авторизации - простая, усиленная без api_id, усиленная с api_id</param>
-        /// <returns>Стоимость сообщения на указанный номер и количество сообщений, необходимых для его отправки.</returns>
+        
         public String CheckCost(String to, String text, EnumAuthenticationTypes authType)
         {
             String result = String.Empty;
@@ -445,7 +555,7 @@ namespace SmsRu
 
             using (StreamWriter writer = new StreamWriter(log_cost, true))
             {
-                writer.WriteLine(String.Format("{0}={1}{2}Cтоимость сообщения и количество необходимых для отправки сообщений: {3}{2}{4}", DateTime.Now.ToLongDateString(), DateTime.Now.ToLongTimeString(), Environment.NewLine, to, text));
+                writer.WriteLine(String.Format("{0}={1}{2}Cтоимость сообщения и количество необходимых для отправки сообщений: {3}{2}{3}Сообщение: {4}", DateTime.Now.ToLongDateString(), DateTime.Now.ToLongTimeString(), Environment.NewLine, to, text));
                 String auth = String.Empty;
                 String link = String.Empty;
                 String answer = String.Empty;
@@ -519,11 +629,7 @@ namespace SmsRu
         #endregion
 
         #region Получение состояния баланса
-        /// <summary>
-        /// Получение состояния баланса.
-        /// </summary>
-        /// <param name="authType">Тип авторизации - простая, усиленная без api_id, усиленная с api_id</param>
-        /// <returns>Ответ сервера.</returns>
+        
         public String CheckBalance(EnumAuthenticationTypes authType)
         {
             String result = String.Empty;
@@ -572,7 +678,6 @@ namespace SmsRu
                                 using (StreamReader sr = new StreamReader(stream))
                                 {
                                     answer = sr.ReadToEnd();
-
                                     writer.WriteLine(String.Format("Ответ: {0}", answer));
                                     writer.WriteLine("Документация - http://sms.ru/?panel=api&subpanel=method&show=my/balance" + Environment.NewLine);
 
@@ -615,11 +720,7 @@ namespace SmsRu
         #endregion
 
         #region Получение текущего состояния дневного лимита
-        /// <summary>
-        /// Получение текущего состояния вашего дневного лимита.
-        /// </summary>
-        /// <param name="authType">Тип авторизации - простая, усиленная без api_id, усиленная с api_id</param>
-        /// <returns>Ответ сервера.</returns>
+       
         public String CheckLimit(EnumAuthenticationTypes authType)
         {
             String result = String.Empty;
@@ -711,11 +812,7 @@ namespace SmsRu
         #endregion
 
         #region Получение списка отправителей
-        /// <summary>
-        /// Получение списка отправителей
-        /// </summary>
-        /// <param name="authType">Тип авторизации - простая, усиленная без api_id, усиленная с api_id</param>
-        /// <returns>Ответ сервера.</returns>
+        
         public String CheckSenders(EnumAuthenticationTypes authType)
         {
             String result = String.Empty;
@@ -805,10 +902,7 @@ namespace SmsRu
         #endregion
 
         #region Получение токена
-        /// <summary>
-        /// Получение временного ключа, с помощью которого в дальнейшем шифруется пароль. Используется в методах, требущих усиленную авторизацию. Закреплен за вашим IP адресом и работает только в течение 10 минут.
-        /// </summary>
-        /// <returns>32х значный ключ, закрепленный за вашим ip адресом на 10 минут, который используется для шифрования вашего пароля в других методах.</returns>
+        
         public String GetToken()
         {
             String result = String.Empty;
@@ -852,12 +946,8 @@ namespace SmsRu
         #endregion
 
         #region Проверка статуса сообщения
-        /// <summary>
-        /// Проверка номера телефона и пароля на действительность
-        /// </summary>
-        /// <param name="authType">Тип авторизации - простая, усиленная без api_id, усиленная с api_id</param>
-        /// <returns>Ответ сервера.</returns>
-        public ResponseOnAuthRequest CheckAuth(EnumAuthenticationTypes authType)
+        
+        public ResponseOnAuthRequest AuthCheck(EnumAuthenticationTypes authType)
         {
             ResponseOnAuthRequest result = ResponseOnAuthRequest.Error;
 
@@ -950,19 +1040,14 @@ namespace SmsRu
         #endregion
 
         #region Операции с Stoplist
-        /// <summary>
-        /// На номера, добавленные в стоплист, не доставляются сообщения (и за них не списываются деньги).
-        /// </summary>
-        /// <param name="phone">Номер телефона.</param>
-        /// <param name="text">Примечание (доступно только вам).</param>
-        /// <returns>Номер добавлен в стоплист = true, иначе - false</returns>
+        
         public Boolean StoplistAdd(String phone, String text, EnumAuthenticationTypes authType)
         {
             Boolean result = false;
 
             if (String.IsNullOrEmpty(text))
-                throw new ArgumentNullException("text", "Неверные входные данные - обязательный параметр.");                  
-            
+                throw new ArgumentNullException("text", "Неверные входные данные - обязательный параметр.");
+
             try
             {
                 if (!Directory.Exists(dir))
@@ -998,7 +1083,7 @@ namespace SmsRu
                         auth = String.Format("login={0}&token={1}&sha512={2}", login, token, sha512wapi);
 
                     parameters = String.Format("{0}&stoplist_phone={1}&stoplist_text={2}", auth, phone, text);
-                   
+
                     writer.WriteLine(String.Format("Запрос: {0}{1}", Environment.NewLine, parameters));
 
                     WebRequest request = WebRequest.Create(stoplistAddUrl);
@@ -1055,13 +1140,7 @@ namespace SmsRu
             }
             return result;
         }
-
-        /// <summary>
-        /// Удаляет один номер из стоплиста
-        /// </summary>
-        /// <param name="phone">Номер телефона.</param>
-        /// <param name="authType">Тип авторизации - простая, усиленная без api_id, усиленная с api_id</param>
-        /// <returns>Номер удален из стоплиста = true, иначе - false</returns>
+        
         public Boolean StoplistDelete(String phone, EnumAuthenticationTypes authType)
         {
             Boolean result = false;
@@ -1158,12 +1237,7 @@ namespace SmsRu
             }
             return result;
         }
-
-        /// <summary>
-        /// Весь стоплист выгружается в формате номер;примечание на отдельных строчках (первая строчка - цифра 100).
-        /// </summary>
-        /// <param name="authType">Тип авторизации - простая, усиленная без api_id, усиленная с api_id</param>
-        /// <returns>Запрос обработан. На последующих строчках будут идти номера телефонов, указанных в стоплисте в формате номер;примечание.</returns>
+        
         public String StoplistGet(EnumAuthenticationTypes authType)
         {
             String result = String.Empty;

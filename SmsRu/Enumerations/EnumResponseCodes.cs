@@ -37,6 +37,10 @@ namespace SmsRu.Enumerations
         MethodNotFound = 211,
         /// <summary>Сервис временно недоступен, попробуйте чуть позже</summary>
         ServiceIsUnavailable = 220,
+        /// <summary>
+        /// Сообщение не принято к отправке, так как на один номер в день нельзя отправлять более 100 сообщений.
+        /// </summary>
+        DayMessageLimitToNumber = 230,
         /// <summary>Неправильный token (возможно истек срок действия, либо ваш IP изменился).</summary>
         WrongToken = 300,
         /// <summary>Неправильный пароль, либо пользователь не найден.</summary>
